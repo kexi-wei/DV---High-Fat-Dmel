@@ -1,0 +1,2067 @@
+---
+title: "High Fat Diet D. melanogaster Project Paper"
+author: "G5B - Jordi Cugat Bardaji, Eva Sanz Blasco, Biel Vicente Bou & Kexi Wei"
+date: "`r Sys.Date()`"
+output: 
+  html_document:
+    theme: flatly
+    highlight: tango
+    toc: true
+    toc_float: true
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE, warning = FALSE, message = FALSE, fig.align = 'center')
+```
+
+```{r, message=FALSE, warning=FALSE}
+library(Rtsne)
+library(ggplot2)
+library(plotly)
+library(htmltools)
+library(dplyr)
+library(factoextra)
+library(ggfortify)
+library(readr)
+library(gtsummary)
+library(scales)
+library(gganimate)
+library(umap)
+```
+
+## Dataset introduction
+
+The dataset is obtained from the original publication published in March 12, 2019 from Stobdan et. al: "High fat diet induces sex-specific differential gene expression in Drosophila melanogaster" (doi: 10.1371/journal.pone.0213474)
+
+The paper states that about 2 billion adults globally are estimated to be overweight and ~13% of them are obese. High fat diet (HFD) is one of the major contributing factors to obesity, heart disease, diabetes and cancer. Recent findings on the role of HFD in inducing abnormalities in neurocognition and susceptibility to Alzheimer's disease are highly intriguing.
+
+As fundamental molecular pathways are often conserved across species, studies involving Drosophila melanogaster as a model organism can provide insight into the molecular mechanisms involving human disease. In order to study some of such mechanisms in the central nervous system as well in the rest of the body, we investigated the effect of HFD on the transcriptome in the heads and bodies of male and female flies kept on either HFD or regular diet (RD).
+
+It principally sets the following hypothesis:
+  - **Hypothesis 1**: High Fat Diet may induce abnormalities in nervous system; implying difference in gene expression.
+
+  - **Hypothesis 2**: Tissue specific expression, it will greatly segregate data as the expression in the CNS (head) is different from the metabolic organs (body).
+
+  - **Hypothesis 3**: Sex specific expression due to change in physiological transcriptomes.
+
+
+### Data and functions loading
+
+```{r}
+exprs_data <- read.table("https://raw.githubusercontent.com/kexi-wei/DV---High-Fat-Dmel/refs/heads/main/SRP171981.tsv", 
+                        header = TRUE, 
+                        sep = ",", 
+                        row.names = 1)
+```
+
+```{r}
+meta_data <- read.csv2("https://raw.githubusercontent.com/kexi-wei/DV---High-Fat-Dmel/refs/heads/main/metadata_SRP171981.csv", 
+                      row.names = 1, 
+                      header = TRUE)
+```
+
+In order to visualize the results from the different analysis, we have designed different functions for it.
+
+<details>
+<summary>Click to show PCA: Variance explained R code</summary>
+
+```{r}
+plot_pca_scree_function <- function(pca, title = '', fill_color = "#698B69") {
+  p <- fviz_eig(pca, 
+                addlabels = TRUE, 
+                hjust = -0.3, 
+                barfill = fill_color, 
+                barcolor = fill_color) + 
+                labs(title = title)
+       theme_light() +
+  return(ggplotly(p))
+  }
+```
+
+</details>
+
+<details>
+<summary>Click to show Base plot visualization R code</summary>
+
+```{r}
+plot_base <- function(data, third_variable, metadata = meta_data, title = 'Results', x_lab = 'dim1', y_lab = 'dim2') {
+  insets <- list('Diet' = c(-0.225,0), 'sex' = c(-0.2, 0), 'specimen_part' = c(-0.375, 0), 'total_exp_interval' = c(-0.325, 0))
+  third_variable_values <- as.factor(metadata[,third_variable])
+  if (third_variable == 'total_exp_interval') {
+    cols <- c('red', 'green', 'yellow')
+  }
+  else {
+    cols <- hue_pal()(length(levels(third_variable_values))) 
+  }
+  shapes <- c(3, 15, 17)
+  par(mar = c(4, 4, 3, 10), xpd = TRUE)
+  
+  plot(data, col = cols[third_variable_values], pch = shapes[as.factor(metadata$Replicate)],
+       xlab = x_lab, ylab = y_lab)
+  title(paste(title, 'for', third_variable))
+  legend("topright",
+       legend = levels(third_variable_values),
+       col = cols,
+       pch = 19,
+       title = third_variable,
+       inset = insets[[third_variable]])
+  legend("bottomright", 
+         legend = c("R1", "R2", "R3"), 
+         pch = c(3, 15, 17), 
+         col = "black",     
+         title = "Replicate",
+         inset = c(-0.2,0))
+}
+```
+
+</details>
+
+<details>
+<summary>Click to show ggplot visualization R code</summary>
+
+```{r}
+plot_function <- function(data, third_variable, metadata = meta_data, title = 'Results', x_lab="dim1", y_lab="dim2") {
+  data_plot <- data.frame(x = data[,1], 
+                          y = data[,2])
+  
+  p <- ggplot(data_plot, aes(x, y, 
+                             shape = metadata$Replicate, 
+                             colour = metadata[[third_variable]])) +
+    geom_point() +
+    scale_shape_manual(name = 'Replicate', values = c(3, 15, 17)) +
+    theme_light() +
+    xlab(x_lab) +
+    ylab(y_lab) +
+    labs(title = paste(title, 'for', third_variable))
+  
+  if (third_variable == 'total_exp') {
+    p <- p + scale_color_gradient(name = 'Expression', low = 'green', high = 'red')
+  }
+  else {
+    p <- p + scale_colour_discrete(name = third_variable)
+  }
+  div(style = 'width: 600px; margin-left: auto; margin-right: auto;', ggplotly(p))
+}
+```
+
+</details>
+
+<details>
+<summary>Click to show PCA: ggfortify R code</summary>
+
+```{r}
+plot_pca_ggfortify <- function(pca, third_variable, title="Results") {
+  p <- ggplot2::autoplot(pca, 
+                         data = meta_data, 
+                         shape = "Replicate", 
+                         colour = third_variable) +
+    scale_shape_manual(name = 'Replicate', values = c(3, 15, 17)) +
+    theme_light() +
+    xlab("PCA1") +
+    ylab("PCA2")+
+    ggtitle(paste(title, 'for', third_variable))
+  if (third_variable == 'total_exp') {
+    p <- p + scale_color_gradient(name = 'Expression', low = 'green', high = 'red')
+  }
+  else {
+    p <- p + scale_colour_discrete(name = third_variable)
+  } 
+  
+  return(plotly::ggplotly(p))
+  }
+
+```
+
+</details>
+
+## Data analysis
+
+We transpose the data in order to have the genes as columns and samples as rows. Then, we order the samples in the expression dataframe as to be in the same order as the rows in meta data.
+
+```{r}
+exprs_data <- t(exprs_data)
+exprs_data <- exprs_data[row.names(meta_data),]
+```
+
+```{r}
+# Checking metadata
+head(meta_data) 
+dim(meta_data) 
+str(meta_data)
+sum(is.na(meta_data))
+
+# Check if the samples are in the same order
+all.equal(row.names(meta_data),row.names(exprs_data))
+
+# checking exprs_data
+head(exprs_data[,1:5]) 
+dim(exprs_data) 
+str(exprs_data)
+sum(is.na(exprs_data))
+```
+```{r}
+gtsummary::tbl_summary(meta_data)
+```
+
+After checking different parameters of the data, it can be concluded that the experiment has been done with 181 samples, tracking 4 variables (sex, diet, specimen part and replicate), and extracting genetic information from 16913 genes.
+
+Moreover, it is confirmed that the samples in both data frames are in rows and they are in the same position.
+
+### Data frames creation
+
+As to normalize the data, it is necessary to clear out the genes which total expression is 0, as any number cannot be divided by 0. Then on, the remaining samples' expression is divided by the total expression, such as to normalize it.
+
+In addition, we also create a new variable "total_exp", calculating the total expression of a sample, as to later be able to track it, and possibly infer some conclusions; and "total_exp_interval" to classify it in the base plot.
+
+```{r}
+exprs_data_clean <- exprs_data[, colSums(exprs_data)>0]
+exprs_data_norm <- exprs_data_clean/rowSums(exprs_data_clean)
+meta_data$total_exp <- rowSums(exprs_data_clean)
+intervals <- quantile(meta_data$total_exp, probs = c(0.333, 0.666))
+meta_data$total_exp_interval <- ifelse(meta_data$total_exp < intervals[1], 'low', ifelse(meta_data$total_exp > intervals[2], 'high', 'mid'))
+```
+
+### Outliers {.tabset}
+
+At first, we observe that there is a few samples which might be considered outliers due to their low expression (<1.5*IQR) in comparison to the other samples. However, as we are working with RNAseq, we already know that before extracting conclusions, we need to work with the normalized data. Hence, we will not clear them out yet, as to compare if the different algorithms consider them as outliers or not.
+
+
+#### Diet
+
+```{r}
+ggplot(meta_data, aes(x = total_exp, y = Diet, fill = Diet)) +
+  geom_boxplot() +
+  scale_fill_brewer(palette = "Dark2") + 
+  labs(
+    title = "Total expression by diet",
+    x = "Total expression",
+    y = "Diet followed"
+  ) +
+  theme_light()
+```
+
+#### Specimen part
+
+```{r}
+ggplot(meta_data, aes(x = total_exp, y = specimen_part, fill = specimen_part)) +
+  geom_boxplot() +
+  scale_fill_brewer(palette = "Dark1") + 
+  labs(
+    title = "Total expression by specimen part",
+    x = "Total expression",
+    y = "Part of the sample"
+  ) +
+  theme_light()
+```
+
+#### Sex
+
+```{r}
+ggplot(meta_data, aes(x = total_exp, y = sex, fill = sex)) +
+  geom_boxplot() +
+  scale_fill_brewer(palette = "Accent") + 
+  labs(
+    title = "Total expression by sex",
+    x = "Total expression",
+    y = "Sex of the fly"
+  ) +
+  theme_light()
+```
+
+### {-}
+
+## PCA Representation
+
+### Non-scaled 
+
+```{r}
+pca_non_scal <- prcomp(exprs_data, scale. = FALSE, center = TRUE)
+```
+
+#### Variance explained {.tabset}
+
+From the following scree plot, we can deduce that the non-scaled dataset might be dominated by noise. This is because there is a massive variable that explains 72.5% of the variance (probably also causing batch effect), such that it misleads the algorithm to group the samples by that dominant variable, while dropping other biological effects.
+
+##### Base plot
+
+```{r}
+plot(pca_non_scal, col="red", main="Non-scaled PCA variance explained")
+```
+
+##### Factoextra
+
+```{r}
+plot_pca_scree_function(pca_non_scal, "Non-scaled PCA scree plot", "red")
+```
+
+#### {-}
+
+#### Visualization {.tabset}
+
+As we observe from the following plots, there it seems to indeed be a batch effect because most of the samples tend to group together by replicates; implying a possible technical difference.
+
+##### Base plot {.tabset}
+
+###### Diet
+
+```{r}
+plot_base(pca_non_scal$x, "Diet", meta_data, "PCA non-scaled visualization", "PC1", "PC2")
+```
+
+###### Specimen part
+
+```{r}
+plot_base(pca_non_scal$x, "specimen_part", meta_data, "PCA non-scaled visualization", "PC1", "PC2")
+```
+
+###### Sex
+
+```{r}
+plot_base(pca_non_scal$x, "sex", meta_data, "PCA non-scaled visualization", "PC1", "PC2")
+```
+
+###### Expression
+
+```{r}
+plot_base(pca_non_scal$x, "total_exp_interval", meta_data, "PCA non-scaled visualization", "PC1", "PC2")
+```
+
+##### ggplot {.tabset}
+
+###### Diet
+
+```{r}
+plot_function(pca_non_scal$x, "Diet", meta_data, "PCA non-scaled visualization", "PC1", "PC2")
+```
+
+###### Specimen part
+
+```{r}
+plot_function(pca_non_scal$x, "specimen_part", meta_data, "PCA non-scaled visualization", "PC1", "PC2")
+```
+
+###### Sex
+
+```{r}
+plot_function(pca_non_scal$x, "sex", meta_data, "PCA non-scaled visualization", "PC1", "PC2")
+```
+
+###### Expression
+
+```{r}
+plot_function(pca_non_scal$x, "total_exp", meta_data, "PCA non-scaled visualization", "PC1", "PC2")
+```
+
+##### ggfortify {.tabset}
+
+###### Diet
+
+```{r}
+plot_pca_ggfortify(pca_non_scal, "Diet", "PCA non-scaled visualization")
+```
+
+###### Specimen part
+
+```{r}
+plot_pca_ggfortify(pca_non_scal, "specimen_part", "PCA non-scaled visualization")
+```
+
+###### Sex
+
+```{r}
+plot_pca_ggfortify(pca_non_scal, "sex", "PCA non-scaled visualization")
+```
+
+###### Expression
+
+```{r}
+plot_pca_ggfortify(pca_non_scal, "total_exp", "PCA non-scaled visualization")
+```
+
+#### {-}
+
+### Scaled
+
+```{r}
+pca_scal <- prcomp(exprs_data_clean, scale. = TRUE, center = TRUE)
+```
+
+#### Variance explained {.tabset}
+
+For the scaled dataset, the variance is distributed much more evenly across multiple principal components, and the dominance of the single large variable is removed.
+
+##### Base plot
+
+```{r}
+plot(pca_scal, col="#68228B", main="Scaled PCA variance explained")
+```
+
+##### Factoextra
+
+```{r}
+plot_pca_scree_function(pca_scal, "Scaled PCA scree plot", "#68228B")
+```
+
+#### {-}
+
+#### Visualization {.tabset}
+
+However, even the dominance of the large variable is removed, we can still see a strong batch effect in the plots below. The clusters formed are mostly by samples from the same replicate. Therefore, as there is still a technical difference, we cannot extract conclusions.
+
+##### Base plot {.tabset}
+
+###### Diet
+
+```{r}
+plot_base(pca_scal$x, "Diet", meta_data, "PCA scaled visualization", "PC1", "PC2")
+```
+
+###### Specimen part
+
+```{r}
+plot_base(pca_scal$x, "specimen_part", meta_data, "PCA scaled visualization", "PC1", "PC2")
+```
+
+###### Sex
+
+```{r}
+plot_base(pca_scal$x, "sex", meta_data, "PCA scaled visualization", "PC1", "PC2")
+```
+
+###### Expression
+
+```{r}
+plot_base(pca_scal$x, "total_exp_interval", meta_data, "PCA scaled visualization", "PC1", "PC2")
+```
+
+##### ggplot {.tabset}
+
+###### Diet
+
+```{r}
+plot_function(pca_scal$x, "Diet", meta_data, "PCA scaled visualization", "PC1", "PC2")
+```
+
+###### Specimen part
+
+```{r}
+plot_function(pca_scal$x, "specimen_part", meta_data, "PCA scaled visualization", "PC1", "PC2")
+```
+
+###### Sex
+
+```{r}
+plot_function(pca_scal$x, "sex", meta_data, "PCA scaled visualization", "PC1", "PC2")
+```
+
+###### Expression
+
+```{r}
+plot_function(pca_scal$x, "total_exp", meta_data, "PCA scaled visualization", "PC1", "PC2")
+```
+
+##### ggfortify {.tabset}
+
+###### Diet
+
+```{r}
+plot_pca_ggfortify(pca_scal, "Diet", "PCA scaled visualization")
+```
+
+###### Specimen part
+
+```{r}
+plot_pca_ggfortify(pca_scal, "specimen_part", "PCA scaled visualization")
+```
+
+###### Sex
+
+```{r}
+plot_pca_ggfortify(pca_scal, "sex", "PCA scaled visualization")
+```
+
+###### Expression
+
+```{r}
+plot_pca_ggfortify(pca_scal, "total_exp", "PCA scaled visualization")
+```
+
+#### {-}
+
+
+### Normalized
+
+```{r}
+pca_result <- prcomp(exprs_data_norm, scale. = TRUE, center = TRUE)
+```
+
+#### Variance explained {.tabset}
+
+For the normalized dataset, a much evenly distributed variance is seen in comparison to the non-scaled. In this case, we can observe a PC1 of 33.2% and PC2 of 29.1%, which means that the 62,3% of the variance of this data is successfully explained by 2 main biological factors.
+
+##### Base plot
+
+```{r}
+plot(pca_result, col="#7CCD7C", main="Normalized PCA variance explained")
+```
+
+##### Factoextra
+
+```{r}
+plot_pca_scree_function(pca_result,"Normalized PCA scree plot", "#7CCD7C")
+```
+
+#### {-}
+
+#### Visualization {.tabset}
+
+The following plots illustrate that most probably PC1 is "specimen part", as the main gap in the horizontal axis is separating heads and bodies without head. This implies that specimen part is the variable that dictates the most the differences between samples.
+
+Secondly, PC2 is probably "sex", as we can see that the vertical axis is trying to separate them by sex (females on top and males bottom); however, it seems that it is not able to fully separate them in the left bottom cluster.
+
+Moreover, it is also observed that "Diet" and "Total expression" do not seem to interfere much into the difference in samples' expression.
+
+##### Base plot {.tabset}
+
+###### Diet
+
+```{r}
+plot_base(pca_result$x, "Diet", meta_data, "PCA normalized visualization", "PC1", "PC2")
+```
+
+###### Specimen part
+
+```{r}
+plot_base(pca_result$x, "specimen_part", meta_data, "PCA normalized visualization", "PC1", "PC2")
+```
+
+###### Sex
+
+```{r}
+plot_base(pca_result$x, "sex", meta_data, "PCA normalized visualization", "PC1", "PC2")
+```
+
+###### Expression
+
+```{r}
+plot_base(pca_result$x, "total_exp_interval", meta_data, "PCA normalized visualization", "PC1", "PC2")
+```
+
+##### ggplot {.tabset}
+
+###### Diet
+
+```{r}
+plot_function(pca_result$x, "Diet", meta_data, "PCA normalized visualization", "PC1", "PC2")
+```
+
+###### Specimen part
+
+```{r}
+plot_function(pca_result$x, "specimen_part", meta_data, "PCA normalized visualization", "PC1", "PC2")
+```
+
+###### Sex
+
+```{r}
+plot_function(pca_result$x, "sex", meta_data, "PCA normalized visualization", "PC1", "PC2")
+```
+
+###### Expression
+
+```{r}
+plot_function(pca_result$x, "total_exp", meta_data, "PCA normalized visualization", "PC1", "PC2")
+```
+
+##### ggfortify {.tabset}
+
+###### Diet
+
+```{r}
+plot_pca_ggfortify(pca_result, "Diet", "PCA normalized visualization")
+```
+
+###### Specimen part
+
+```{r}
+plot_pca_ggfortify(pca_result, "specimen_part", "PCA normalized visualization")
+```
+
+###### Sex
+
+```{r}
+plot_pca_ggfortify(pca_result, "sex", "PCA normalized visualization")
+```
+
+###### Expression
+
+```{r}
+plot_pca_ggfortify(pca_result, "total_exp", "PCA normalized visualization")
+```
+
+#### {-}
+
+
+### PCA Comparison Plot {.tabset}
+
+<details>
+<summary>Click to show the PCA global data frame creation R code</summary>
+```{r}
+df_non_scal <- data.frame(
+  PC1 = pca_non_scal$x[,1],
+  PC2 = pca_non_scal$x[,2],
+  diet = meta_data$Diet,
+  rep = meta_data$Replicate,
+  sex = meta_data$sex,
+  exp = meta_data$total_exp,
+  part = meta_data$specimen_part,
+  Method = "Non-scaled"
+)
+
+df_scal <- data.frame(
+  PC1 = pca_scal$x[,1],
+  PC2 = pca_scal$x[,2],
+  diet = meta_data$Diet,
+  rep = meta_data$Replicate,
+  sex = meta_data$sex,
+  exp = meta_data$total_exp,
+  part = meta_data$specimen_part,
+  Method = "Scaled"
+)
+
+df_norm <- data.frame(
+  PC1 = pca_result$x[,1],
+  PC2 = pca_result$x[,2],
+  diet = meta_data$Diet,
+  rep = meta_data$Replicate,
+  sex = meta_data$sex,
+  exp = meta_data$total_exp,
+  part = meta_data$specimen_part,
+  Method = "Normalized"
+)
+
+# Combine all PCA results
+df_all <- bind_rows(df_non_scal, df_scal, df_norm)
+
+# Set facet order
+df_all$Method <- factor(
+  df_all$Method,
+  levels = c("Non-scaled", "Scaled", "Normalized")
+)
+```
+
+</details>
+
+Regarding general observations, we can state that there was a strong batch effect before normalizing the data, indicating the existence of technical variation possibly due to experiment design. In addition, after normalizing the "corrected" plot, we can state that PCA does not consider the existence of any outliers, as there is no isolated samples which are far away from the others; which would mean that those samples are considered really different.
+
+#### Diet
+
+```{r fig.width=12, fig.height=5}
+ggplot(df_all,
+       aes(x = PC1,
+           y = PC2,
+           colour = diet,
+           shape = rep)) +
+  
+  geom_point(alpha = 0.8) +
+  theme_bw()+
+  ggtitle("PCA Visualization for Diet")+
+  
+  facet_wrap(~Method, scales = "free") +
+  
+  scale_shape_manual(values = c(
+    "R1" = 3,
+    "R2" = 15,
+    "R3" = 17
+  ))
+```
+
+#### Specimen part
+
+```{r fig.width=12, fig.height=5}
+ggplot(df_all,
+       aes(x = PC1,
+           y = PC2,
+           colour = part,
+           shape = rep)) +
+  
+  geom_point(alpha = 0.8) +
+  theme_bw()+
+  ggtitle("PCA Visualization for Specimen part")+
+  
+  facet_wrap(~Method, scales = "free") +
+  
+  scale_shape_manual(values = c(
+    "R1" = 3,
+    "R2" = 15,
+    "R3" = 17
+  ))
+```
+
+#### Sex
+
+```{r fig.width=12, fig.height=5}
+ggplot(df_all,
+       aes(x = PC1,
+           y = PC2,
+           colour = sex,
+           shape = rep)) +
+  
+  geom_point(alpha = 0.8) +
+  theme_bw()+
+  ggtitle("PCA Visualization for Sex")+
+  facet_wrap(~Method, scales = "free") +
+  
+  scale_shape_manual(values = c(
+    "R1" = 3,
+    "R2" = 15,
+    "R3" = 17))
+
+```
+
+#### Expression
+
+```{r fig.width=12, fig.height=5}
+ggplot(df_all,
+       aes(x = PC1,
+           y = PC2,
+           colour = exp,
+           shape = rep)) +
+  
+  geom_point(alpha = 0.8) +
+  theme_bw()+
+  ggtitle("PCA Visualization for Total Expression")+
+  
+  facet_wrap(~Method, scales = "free") +
+  
+  scale_shape_manual(values = c(
+    "R1" = 3,
+    "R2" = 15,
+    "R3" = 17
+  )) +
+  scale_color_gradient(name = 'Expression', low = 'green', high = 'red')
+```
+
+### {-}
+
+
+## tSNE
+
+```{r}
+set.seed(42)
+tsne_raw <- Rtsne(exprs_data)
+set.seed(42)
+tsne_norm <- Rtsne(exprs_data_norm)
+```
+
+### Raw data Visualization {.tabset}
+
+As similarly with what happened before, tSNE also consider that the technical differences (batch effect) in the raw data is very strong, such that most clusters are formed by samples of the same replicate.
+
+#### Base plot {.tabset}
+
+##### Diet
+
+```{r}
+plot_base(tsne_raw$Y, "Diet", meta_data, "tSNE raw visualization")
+```
+
+##### Specimen part
+
+```{r}
+plot_base(tsne_raw$Y, "specimen_part", meta_data, "tSNE raw visualization")
+```
+
+##### Sex
+
+```{r}
+plot_base(tsne_raw$Y, "sex", meta_data, "tSNE raw visualization")
+```
+
+##### Expression
+
+```{r}
+plot_base(tsne_raw$Y, "total_exp_interval", meta_data, "tSNE raw visualization")
+```
+
+#### ggplot {.tabset}
+
+##### Diet
+
+```{r}
+plot_function(tsne_raw$Y, "Diet", meta_data, "tSNE raw visualization")
+```
+
+##### Specimen part
+
+```{r}
+plot_function(tsne_raw$Y, "specimen_part", meta_data, "tSNE raw visualization")
+```
+
+##### Sex
+
+```{r}
+plot_function(tsne_raw$Y, "sex", meta_data, "tSNE raw visualization")
+```
+
+##### Expression
+
+```{r}
+plot_function(tsne_raw$Y, "total_exp", meta_data, "tSNE raw visualization")
+```
+
+### {-}
+
+### Normalized data Visualization {.tabset}
+
+The normalized data presents clearer structures suitable for interpretation. An important thing to remark is that PCA distinguish samples by the global distance of the axis, while tSNE separates by clusters directly, such that the global distance does not matter, just the distance inside the cluster (further they are implies more difference).
+
+Therefore, in the plots beneath, we can deduce that for tSNE, the most decisive variable is "sex" because all 3 clusters seems to be classified by sex (2 of them is fully formed of females and 1 of all males). Another important variable is "specimen part", as some of the clusters are only formed by samples of the same part. Whereas the clusters from diet and specimen part seem to be more heterogeneous.
+
+#### Base plot {.tabset}
+
+##### Diet
+
+```{r}
+plot_base(tsne_norm$Y, "Diet", meta_data, "tSNE normalized visualization")
+```
+
+##### Specimen part
+
+```{r}
+plot_base(tsne_norm$Y, "specimen_part", meta_data, "tSNE normalized visualization")
+```
+
+##### Sex
+
+```{r}
+plot_base(tsne_norm$Y, "sex", meta_data, "tSNE normalized visualization")
+```
+
+##### Expression
+
+```{r}
+plot_base(tsne_norm$Y, "total_exp_interval", meta_data, "tSNE normalized visualization")
+```
+
+#### ggplot {.tabset}
+
+##### Diet
+
+```{r}
+plot_function(tsne_norm$Y, "Diet", meta_data, "tSNE normalized visualization")
+```
+
+##### Specimen part
+
+```{r}
+plot_function(tsne_norm$Y, "specimen_part", meta_data, "tSNE normalized visualization")
+```
+
+##### Sex
+
+```{r}
+plot_function(tsne_norm$Y, "sex", meta_data, "tSNE normalized visualization")
+```
+
+##### Expression
+
+```{r}
+plot_function(tsne_norm$Y, "total_exp", meta_data, "tSNE normalized visualization")
+```
+
+### {-}
+
+### tSNE Comparison Plot {.tabset}
+
+<details>
+<summary>Click to show the tSNE global data frame creation R code</summary>
+
+```{r}
+df_raw <- data.frame(
+  tSNE1 = tsne_raw$Y[,1],
+  tSNE2 = tsne_raw$Y[,2],
+  diet = meta_data$Diet,
+  rep = meta_data$Replicate,
+  sex = meta_data$sex,
+  exp = meta_data$total_exp,
+  part = meta_data$specimen_part,
+  Method_tsne = "Raw"
+)
+
+df_norma <- data.frame(
+  tSNE1 = tsne_norm$Y[,1],
+  tSNE2 = tsne_norm$Y[,2],
+  diet = meta_data$Diet,
+  rep = meta_data$Replicate,
+  sex = meta_data$sex,
+  exp = meta_data$total_exp,
+  part = meta_data$specimen_part,
+  Method_tsne = "Normalized"
+)
+
+df_all_tsne <- bind_rows(df_raw, df_norma)
+
+df_all_tsne$Method_tsne <- factor(
+  df_all_tsne$Method_tsne,
+  levels = c("Raw", "Normalized")
+)
+```
+
+</details>
+
+As we can observe from the following plots, in the raw data there exists a strong batch effect, where all the "clusters" formed are from the same replicate. This is really noisy because the tSNE algorithm will start to separate them as the main source of variation, while masking other biological factors in which we are interested.
+
+Thus, after plotting the normalized plot, we can observe that the batch effect has disappeared as most of the clusters are formed from a mix of samples from different replicate.
+
+Furthermore, regarding outliers, tSNE neither considers any sample to have an expression different enough such to isolate it specifically.
+
+#### Diet
+
+```{r fig.width=12, fig.height=5}
+ggplot(df_all_tsne,
+       aes(x = tSNE1,
+           y = tSNE2,
+           colour = diet,
+           shape = rep)) +
+  
+  geom_point(alpha = 0.8) +
+  theme_bw()+
+  ggtitle("tSNE Visualization for Diet")+
+  facet_wrap(~Method_tsne, scales = "free") +
+  
+  scale_shape_manual(values = c(
+    "R1" = 3,
+    "R2" = 15,
+    "R3" = 17))
+
+```
+
+#### Specimen part
+
+```{r fig.width=12, fig.height=5}
+ggplot(df_all_tsne,
+       aes(x = tSNE1,
+           y = tSNE2,
+           colour = part,
+           shape = rep)) +
+  
+  geom_point(alpha = 0.8) +
+  theme_bw()+
+  ggtitle("tSNE Visualization for Specimen part")+
+  facet_wrap(~Method_tsne, scales = "free") +
+  
+  scale_shape_manual(values = c(
+    "R1" = 3,
+    "R2" = 15,
+    "R3" = 17))
+
+```
+
+#### Sex
+
+```{r fig.width=12, fig.height=5}
+ggplot(df_all_tsne,
+       aes(x = tSNE1,
+           y = tSNE2,
+           colour = sex,
+           shape = rep)) +
+  
+  geom_point(alpha = 0.8) +
+  theme_bw()+
+  ggtitle("tSNE Visualization for Sex")+
+  facet_wrap(~Method_tsne, scales = "free") +
+  
+  scale_shape_manual(values = c(
+    "R1" = 3,
+    "R2" = 15,
+    "R3" = 17))
+```
+
+#### Expression
+
+```{r fig.width=12, fig.height=5}
+ggplot(df_all_tsne,
+       aes(x = tSNE1,
+           y = tSNE2,
+           colour = exp,
+           shape = rep)) +
+  
+  geom_point(alpha = 0.8) +
+  theme_bw()+
+  ggtitle("tSNE Visualization for Expression")+
+  facet_wrap(~Method_tsne, scales = "free") +
+  scale_color_gradient(name = 'Expression', low = 'green', high = 'red')+
+  
+  scale_shape_manual(values = c(
+    "R1" = 3,
+    "R2" = 15,
+    "R3" = 17))
+```
+
+### {-}
+
+## tSNE parameters {.tabset}
+
+*Check this app for further understanding: https://kexiwei.shinyapps.io/shinyapp-1/*
+
+### Reproducibility {.tabset}
+
+After running the code 3 times for each variable we can observe differences between each plot, but the data seems to be similar in the amount and shape of clusters, they are just in different positions or orientations across the plots.
+
+This is corrected by specifying the seed before doing the Rtsne as we had already done before using the seed 42.
+
+```{r}
+tsne_norm1 <- Rtsne(exprs_data_norm)
+tsne_norm2 <- Rtsne(exprs_data_norm)
+tsne_norm3 <- Rtsne(exprs_data_norm)
+```
+
+<details>
+<summary>Click to show the tSNE different seeds data frame creation R code</summary>
+```{r}
+df_tsne1 <- data.frame(
+  tSNE1  = tsne_norm1$Y[,1],
+  tSNE2  = tsne_norm2$Y[,2],
+  diet   = meta_data$Diet,
+  rep    = meta_data$Replicate,
+  sex    = meta_data$sex,
+  exp    = meta_data$total_exp,
+  part   = meta_data$specimen_part,
+  Method_rep = "Try 1"
+)
+
+df_tsne2 <- data.frame(
+  tSNE1  = tsne_norm2$Y[,1],
+  tSNE2  = tsne_norm2$Y[,2],
+  diet   = meta_data$Diet,
+  rep    = meta_data$Replicate,
+  sex    = meta_data$sex,
+  exp    = meta_data$total_exp,
+  part   = meta_data$specimen_part,
+  Method_rep = "Try 2"
+)
+
+df_tsne3 <- data.frame(
+  tSNE1  = tsne_norm3$Y[,1],
+  tSNE2  = tsne_norm3$Y[,2],
+  diet   = meta_data$Diet,
+  rep    = meta_data$Replicate,
+  sex    = meta_data$sex,
+  exp    = meta_data$total_exp,
+  part   = meta_data$specimen_part,
+  Method_rep = "Try 3"
+)
+
+df_tsne_rep <- bind_rows(df_tsne1, df_tsne2, df_tsne3)
+
+df_tsne_rep$Method_rep <- factor(
+  df_tsne_rep$Method_rep,
+  levels = c("Try 1", "Try 2", "Try 3")
+)
+```
+
+</details>
+
+#### Diet
+
+```{r fig.width=12, fig.height=5}
+ggplot(df_tsne_rep,
+       aes(x = tSNE1,
+           y = tSNE2,
+           colour = diet)) +
+  
+  geom_point(alpha = 0.8) +
+  theme_bw()+
+  ggtitle("tSNE reproducibility for Diet")+
+  
+  facet_wrap(~Method_rep, scales = "free")
+
+```
+
+#### Specimen part
+
+```{r fig.width=12, fig.height=5}
+ggplot(df_tsne_rep,
+       aes(x = tSNE1,
+           y = tSNE2,
+           colour = part)) +
+  
+  geom_point(alpha = 0.8) +
+  theme_bw()+
+  ggtitle("tSNE reproducibility for Specimen part")+
+  
+  facet_wrap(~Method_rep, scales = "free")
+
+```
+
+#### Sex
+
+```{r fig.width=12, fig.height=5}
+ggplot(df_tsne_rep,
+       aes(x = tSNE1,
+           y = tSNE2,
+           colour = sex)) +
+  
+  geom_point(alpha = 0.8) +
+  theme_bw()+
+  ggtitle("tSNE reproducibility for Sex")+
+  
+  facet_wrap(~Method_rep, scales = "free")
+
+```
+
+#### Expression
+
+```{r fig.width=12, fig.height=5}
+ggplot(df_tsne_rep,
+       aes(x = tSNE1,
+           y = tSNE2,
+           colour = exp)) +
+  
+  geom_point(alpha = 0.8) +
+  theme_bw()+
+  ggtitle("tSNE reproducibility for Total Expression")+
+  scale_color_gradient(name = 'Expression', low = 'green', high = 'red')+
+  facet_wrap(~Method_rep, scales = "free")
+
+```
+
+### Perplexity {.tabset}
+
+<details>
+<summary>Click to show the animated perplexity comparison plot R code</summary>
+
+```{r}
+plot_functionP <- function(exprs_data_norm, meta_data, third_variable, seed = 42) {
+  tsne_all <- data.frame()
+  perplexities <- c(1, 10, 30, 50)
+  
+  for (perp in perplexities) {
+    set.seed(seed)
+    tsne_norm <- Rtsne(exprs_data_norm, perplexity = perp)
+    
+    tsne_plot <- data.frame(
+      x = tsne_norm$Y[, 1],
+      y = tsne_norm$Y[, 2],
+      perplexity = perp,
+      Diet = meta_data$Diet,
+      specimen_part = meta_data$specimen_part,
+      sex = meta_data$sex,
+      total_exp=meta_data$total_exp
+    )
+    
+    tsne_all <- rbind(tsne_all, tsne_plot)
+  }
+  
+  p <- ggplot(tsne_all, aes(x, y, colour = .data[[third_variable]], group = 1)) +
+    geom_point(size = 2) +
+    theme_light() +
+    labs(
+      title = paste(third_variable, "- Perplexity", "{closest_state}"),
+      colour = third_variable
+    ) +
+    transition_states(
+      perplexity,
+      transition_length = 2,
+      state_length = 1,
+      wrap = FALSE
+    ) + view_follow(fixed_x = FALSE, fixed_y = FALSE)
+    
+  if (third_variable == 'total_exp') {
+    p <- p + scale_color_gradient(name = 'Expression', low = 'green', high = 'red')
+    }
+  else {
+    p <- p + scale_colour_discrete(name = third_variable)
+    } 
+  
+  animate(p, nframes = 100, fps = 20)
+}
+
+```
+
+</details>
+
+As perplexity controls how many neighbors each point considers, the lower values give more noisy and spread out plots while higher values give plots with more clustered points and more understandable.
+
+The base value of perplexity is 30 and it is enough to get a plot with well defined clusters that works in order to study it. And the limit perplexity depends on the sample size, it should not be bigger than 3 * perplexity < nrow(X) - 1.
+
+```{r}
+(nrow(exprs_data_norm)-1)/3
+```
+
+#### Diet
+
+
+```{r, cache=TRUE}
+plot_functionP(exprs_data_norm, meta_data, "Diet", seed = 42)
+```
+
+#### Specimen part
+
+```{r,cache=TRUE}
+plot_functionP(exprs_data_norm, meta_data, "specimen_part", seed = 42)
+```
+
+
+#### Sex 
+
+```{r, cache=TRUE}
+plot_functionP(exprs_data_norm, meta_data, "sex", seed = 42)
+```
+
+#### Expression 
+
+```{r, cache=TRUE}
+plot_functionP(exprs_data_norm, meta_data, "total_exp", seed = 42)
+```
+
+### Iterations {.tabset}
+
+The number of iterations controls how far tSNE optimizes, similarly to perplexity, the less iterations give more spread out and noisy plots, while larger values cluster points together and make the plots understandable to study them.
+
+The base iteration value is 1000 and we can observe that it is enough as the plots with 2000 iterations give almost the same result as the ones with 1000, but the ones with 100 are not enough because their points are not clustered together as much.
+
+<details>
+<summary>Click to show the animated iterations comparison plot R code</summary>
+
+```{r}
+plot_function3 <- function(exprs_data_norm, meta_data, third_variable, seed = 42) {
+  tsne_all <- data.frame()
+  iterations_values <- c(1, 100, 1000, 2000)
+  
+  for (iterations in iterations_values) {
+    set.seed(seed)
+    tsne_norm <- Rtsne(exprs_data_norm, max_iter = iterations)
+    
+    tsne_plot <- data.frame(
+      x = tsne_norm$Y[, 1],
+      y = tsne_norm$Y[, 2],
+      iterations = iterations,
+      Diet = meta_data$Diet,
+      specimen_part = meta_data$specimen_part,
+      sex = meta_data$sex,
+      total_exp=meta_data$total_exp
+    )
+    
+    tsne_all <- rbind(tsne_all, tsne_plot)
+  }
+  
+  p <- ggplot(tsne_all, aes(x, y, colour = .data[[third_variable]], group = 1)) +
+    geom_point(size = 2) +
+    theme_light() +
+    labs(
+      title = paste(third_variable, "- Iterations", "{closest_state}"),
+      colour = third_variable
+    ) +
+    transition_states(
+      iterations,
+      transition_length = 2,
+      state_length = 1,
+      wrap = FALSE
+    ) + view_follow(fixed_x = FALSE, fixed_y = FALSE)
+  if (third_variable == 'total_exp') {
+    p <- p + scale_color_gradient(name = 'Expression', low = 'green', high = 'red')
+    }
+  else {
+    p <- p + scale_colour_discrete(name = third_variable)
+    }
+  
+  animate(p, nframes = 100, fps = 20)
+}
+
+```
+
+</details>
+
+#### Diet
+
+```{r,cache=TRUE}
+plot_function3(exprs_data_norm, meta_data, "Diet", seed = 42)
+```
+
+#### Specimen part
+
+```{r,cache=TRUE}
+plot_function3(exprs_data_norm, meta_data, "specimen_part", seed = 42)
+```
+
+#### Sex
+
+```{r,cache=TRUE}
+plot_function3(exprs_data_norm, meta_data, "sex", seed = 42)
+```
+
+#### Expression
+
+```{r,cache=TRUE}
+plot_function3(exprs_data_norm, meta_data, "total_exp", seed = 42)
+```
+
+### {-}
+
+## UMAP
+
+```{r}
+set.seed(42)
+UMAP_raw <- umap::umap(exprs_data)
+set.seed(42)
+UMAP_norm <- umap::umap(exprs_data_norm)
+```
+
+### Raw data Visualization {.tabset}
+
+The UMAP visualization of the raw data seems a little cluttered; but if we focus onto the specific cluster, we observe that they are formed by replicates (the same as PCA and tSNE).
+
+#### Base plot {.tabset}
+
+##### Diet
+
+```{r}
+plot_base(UMAP_raw$layout, "Diet", meta_data, "UMAP raw visualization")
+```
+
+##### Specimen part
+
+```{r}
+plot_base(UMAP_raw$layout, "specimen_part", meta_data, "UMAP raw visualization")
+```
+
+##### Sex
+
+```{r}
+plot_base(UMAP_raw$layout, "sex", meta_data, "UMAP raw visualization")
+```
+
+##### Expression
+
+```{r}
+plot_base(UMAP_raw$layout, "total_exp_interval", meta_data, "UMAP raw visualization")
+```
+
+#### ggplot {.tabset}
+
+##### Diet
+
+```{r}
+plot_function(UMAP_raw$layout, "Diet", meta_data, "UMAP raw visualization")
+```
+
+##### Specimen part
+
+```{r}
+plot_function(UMAP_raw$layout, "specimen_part", meta_data, "UMAP raw visualization")
+```
+
+##### Sex
+
+```{r}
+plot_function(UMAP_raw$layout, "sex", meta_data, "UMAP raw visualization")
+```
+
+##### Expression
+
+```{r}
+plot_function(UMAP_raw$layout, "total_exp", meta_data, "UMAP raw visualization")
+```
+
+### {-}
+
+### Normalized data Visualization {.tabset}
+
+Regarding the normalized plot underneath, we can see many small tight/overlapped clusters. This characteristic can imply that the data is really "unique", such that (for this number of neighbors) the algorithm consider the different groups different enough as to each form a cluster.
+
+Unfortunately, the data is currently so fragmented that we cannot infer any possible conclusions.
+
+#### Base plot {.tabset}
+
+##### Diet
+
+```{r}
+plot_base(UMAP_norm$layout, "Diet", meta_data, "UMAP normalized visualization")
+```
+
+##### Specimen part
+
+```{r}
+plot_base(UMAP_norm$layout, "specimen_part", meta_data, "UMAP normalized visualization")
+```
+
+##### Sex
+
+```{r}
+plot_base(UMAP_norm$layout, "sex", meta_data, "UMAP normalized visualization")
+```
+
+##### Expression
+
+```{r}
+plot_base(UMAP_norm$layout, "total_exp_interval", meta_data, "UMAP normalized visualization")
+```
+
+#### ggplot {.tabset}
+
+##### Diet
+
+```{r}
+plot_function(UMAP_norm$layout, "Diet", meta_data, "UMAP normalized visualization")
+```
+
+##### Specimen part
+
+```{r}
+plot_function(UMAP_norm$layout, "specimen_part", meta_data, "UMAP normalized visualization")
+```
+
+##### Sex
+
+```{r}
+plot_function(UMAP_norm$layout, "sex", meta_data, "UMAP normalized visualization")
+```
+
+##### Expression
+
+```{r}
+plot_function(UMAP_norm$layout, "total_exp", meta_data, "UMAP normalized visualization")
+```
+
+### {-}
+
+### UMAP Comparison Plot {.tabset}
+
+We can clearly observe the removal of the batch effect in the normalized plot. The formation of these distinct biological clusters is directly related to this correction; once the technical differences (noise) are eliminated, the samples can naturally and more clearly cluster based solely on their underlying biological signals.
+
+Moreover, we discard the possibility of outliers because we do not see any left out samples gathered far away from the others, meaning that there a renot extremely different samples. 
+
+<details>
+<summary>Click to show the UMAP global data frame creation R code</summary>
+
+```{r}
+df_rawU <- data.frame(
+  UMAP1 = UMAP_raw$layout[,1],
+  UMAP2 = UMAP_raw$layout[,2],
+  diet = meta_data$Diet,
+  rep = meta_data$Replicate,
+  sex = meta_data$sex,
+  exp = meta_data$total_exp,
+  part = meta_data$specimen_part,
+  Method_UMAP = "Raw"
+)
+
+df_normaU <- data.frame(
+  UMAP1 = UMAP_norm$layout[,1],
+  UMAP2 = UMAP_norm$layout[,2],
+  diet = meta_data$Diet,
+  rep = meta_data$Replicate,
+  sex = meta_data$sex,
+  exp = meta_data$total_exp,
+  part = meta_data$specimen_part,
+  Method_UMAP = "Normalized"
+)
+
+df_all_UMAP <- bind_rows(df_rawU, df_normaU)
+
+df_all_UMAP$Method_UMAP <- factor(
+  df_all_UMAP$Method_UMAP,
+  levels = c("Raw", "Normalized")
+)
+```
+
+</details>
+
+#### Diet
+
+```{r fig.width=12, fig.height=5}
+ggplot(df_all_UMAP,
+       aes(x = UMAP1,
+           y = UMAP2,
+           colour = diet,
+           shape = rep)) +
+  
+  geom_point(alpha = 0.8) +
+  theme_bw()+
+  ggtitle("UMAP Visualization for Diet")+
+  facet_wrap(~Method_UMAP, scales = "free") +
+  
+  scale_shape_manual(values = c(
+    "R1" = 3,
+    "R2" = 15,
+    "R3" = 17))
+
+```
+
+#### Specimen part
+
+```{r fig.width=12, fig.height=5}
+ggplot(df_all_UMAP,
+       aes(x = UMAP1,
+           y = UMAP2,
+           colour = part,
+           shape = rep)) +
+  
+  geom_point(alpha = 0.8) +
+  theme_bw()+
+  ggtitle("UMAP Visualization for specimen part")+
+  facet_wrap(~Method_UMAP, scales = "free") +
+  
+  scale_shape_manual(values = c(
+    "R1" = 3,
+    "R2" = 15,
+    "R3" = 17))
+
+```
+
+#### Sex
+
+```{r fig.width=12, fig.height=5}
+ggplot(df_all_UMAP,
+       aes(x = UMAP1,
+           y = UMAP2,
+           colour = sex,
+           shape = rep)) +
+  
+  geom_point(alpha = 0.8) +
+  theme_bw()+
+  ggtitle("UMAP Visualization for sex")+
+  facet_wrap(~Method_UMAP, scales = "free") +
+  
+  scale_shape_manual(values = c(
+    "R1" = 3,
+    "R2" = 15,
+    "R3" = 17))
+
+```
+
+#### Expression
+
+```{r fig.width=12, fig.height=5}
+ggplot(df_all_UMAP,
+       aes(x = UMAP1,
+           y = UMAP2,
+           colour = exp,
+           shape = rep)) +
+  
+  geom_point(alpha = 0.8) +
+  theme_bw()+
+  ggtitle("UMAP Visualization for Expression")+
+  facet_wrap(~Method_UMAP, scales = "free") +
+  scale_color_gradient(name = 'Expression', low = 'green', high = 'red')+
+  
+  scale_shape_manual(values = c(
+    "R1" = 3,
+    "R2" = 15,
+    "R3" = 17))
+
+```
+
+### {-}
+
+### UMAP data prediction {.tabset}
+
+By taking a look at the plots below, it is clear that running UMAP on the separate subsets does not replicate the structure of the original dataset. This discrepancy is caused because UMAP optimizes layouts based strictly on the relationships present within the given input. If we run it on Subset A (75%) and Subset B (25%) independently, it has lead the algorithm to find different local structures. When overlaid, this creates a fundamentally different global layout compared to the original plot where all 100% of the data points were allowed to influence each other simultaneously.
+
+Therefore, the prediction was not accurate probably because of the uniqueness of the data, as the local structures of the 75% are different enough from the 100%, such that the prediction was biased by the subset A structures.
+
+```{r}
+exprs_df <- as.data.frame(exprs_data_norm)
+
+set.seed(42)
+subset_A <- exprs_df %>% slice_sample(prop = 0.75)
+meta_data_A <- meta_data[rownames(subset_A), ]
+
+subset_B <- exprs_df[!(rownames(exprs_df) %in% rownames(subset_A)), ]
+meta_data_B <- meta_data[rownames(subset_B), ]
+
+set.seed(42)
+A_dataSet_UMAP.norm <- umap::umap(subset_A)
+
+set.seed(42)
+dataSet_UMAP.norm = list(layout = (stats::predict(A_dataSet_UMAP.norm, subset_B)))
+```
+
+#### Diet
+
+```{r}
+plot_function(A_dataSet_UMAP.norm$layout, "Diet", meta_data_A, "UMAP subset A")
+plot_function(dataSet_UMAP.norm$layout, "Diet", meta_data_B, "UMAP subset B")
+```
+
+```{r}
+plot_function(UMAP_norm$layout, "Diet", meta_data, "Original")
+
+lay_tot <- rbind(A_dataSet_UMAP.norm$layout, dataSet_UMAP.norm$layout)
+all_umap <- list(layout = lay_tot)
+meta_AB <- dplyr::bind_rows(meta_data_A, meta_data_B)
+
+plot_function(all_umap$layout, "Diet", meta_AB, "Subset A (75%) + Subset B prediction (25%)")
+
+```
+
+#### Specimen part
+
+```{r}
+plot_function(A_dataSet_UMAP.norm$layout, "specimen_part", meta_data_A, "UMAP subset A")
+plot_function(dataSet_UMAP.norm$layout, "specimen_part", meta_data_B, "UMAP subset B")
+```
+
+```{r}
+plot_function(UMAP_norm$layout, "specimen_part", meta_data, "Original")
+
+lay_tot <- rbind(A_dataSet_UMAP.norm$layout, dataSet_UMAP.norm$layout)
+all_umap <- list(layout = lay_tot)
+meta_AB <- dplyr::bind_rows(meta_data_A, meta_data_B)
+
+plot_function(all_umap$layout, "specimen_part", meta_AB, "Subset A (75%) + Subset B prediction (25%)")
+
+```
+
+#### Sex
+
+```{r}
+plot_function(A_dataSet_UMAP.norm$layout, "sex", meta_data_A, "UMAP subset A")
+plot_function(dataSet_UMAP.norm$layout, "sex", meta_data_B, "UMAP subset B")
+```
+
+```{r}
+plot_function(UMAP_norm$layout, "sex", meta_data, "Original")
+
+lay_tot <- rbind(A_dataSet_UMAP.norm$layout, dataSet_UMAP.norm$layout)
+all_umap <- list(layout = lay_tot)
+meta_AB <- dplyr::bind_rows(meta_data_A, meta_data_B)
+
+plot_function(all_umap$layout, "sex", meta_AB, "Subset A (75%) + Subset B prediction (25%)")
+
+```
+
+#### Expression
+
+```{r}
+plot_function(A_dataSet_UMAP.norm$layout, "total_exp", meta_data_A, "UMAP subset A")
+plot_function(dataSet_UMAP.norm$layout, "total_exp", meta_data_B, "UMAP subset B")
+```
+
+```{r}
+plot_function(UMAP_norm$layout, "total_exp", meta_data, "Original")
+
+lay_tot <- rbind(A_dataSet_UMAP.norm$layout, dataSet_UMAP.norm$layout)
+all_umap <- list(layout = lay_tot)
+meta_AB <- dplyr::bind_rows(meta_data_A, meta_data_B)
+
+plot_function(all_umap$layout, "total_exp", meta_AB, "Subset A (75%) + Subset B prediction (25%)")
+
+```
+
+
+### {-}
+
+### UMAP parameters {.tabset}
+
+*Check this app for further understanding: https://kexiwei.shinyapps.io/shinyapp-1/*
+
+#### n_neigbors {.tabset}
+
+The number of neighbors basically determines how far from the point to look, like deciding the number of points that are qualified to be a neighbor. For instance, if you select n_neighbors = 2, each point will only take into consideration the 2 nearest points.
+
+Hence, a low number of neighbors will help us to visualize local features / details; while a high number of neighbors is better for analyzing general / big-picture characteristics. The limit is n-1 because at most, the point itself can consider up to n-1 neighbors (excluding itself), as the point then, is considering all the other points possible within the whole data set n to be its neighbor.
+
+In this case, it seems that that the best number of neighbors for this plot is around 150, as it is when it starts to form visible distinguishable clusters; hence, for the final plots we will be setting n_neighbors to 150.
+
+```{r}
+set.seed(42)
+umap_150 <- umap(exprs_data_norm, n_neighbors=150)
+```
+
+<details>
+<summary>Click to show the animated n_neighbors comparison plot R code</summary>
+
+```{r}
+plot_functionN <- function(exprs_data_norm, third_variable, seed = 42) {
+  umap_all <- data.frame()
+  neighbors <- c(5, 15, 50, 100, 150)
+  
+  for (i in neighbors) {
+    set.seed(seed)
+    umap_res <- umap(exprs_data_norm, n_neighbors = i)
+    
+    umap_plot <- data.frame(
+      x = umap_res$layout[, 1],
+      y = umap_res$layout[, 2],
+      n_neighbors = i,
+      Diet = meta_data$Diet,
+      specimen_part = meta_data$specimen_part,
+      sex = meta_data$sex,
+      total_exp = meta_data$total_exp
+    )
+    
+    umap_all <- rbind(umap_all, umap_plot)
+  }
+  
+  p <- ggplot(umap_all, aes(x, y, colour = .data[[third_variable]], group = 1)) +
+    geom_point(size = 2) +
+    theme_light() +
+    labs(
+      title = paste(third_variable, "- N_neighbors", "{closest_state}"),
+      colour = third_variable
+    ) +
+    transition_states(
+      n_neighbors,
+      transition_length = 2,
+      state_length = 1,
+      wrap = FALSE
+    ) +
+    view_follow(fixed_x = FALSE, fixed_y = FALSE)
+  
+  animate(p, nframes = 100, fps = 20)
+}
+```
+
+</details>
+
+##### Diet
+
+```{r,cache=TRUE}
+plot_functionN(exprs_data_norm, "Diet", seed = 42)
+```
+
+##### Specimen part
+
+```{r,cache=TRUE}
+plot_functionN(exprs_data_norm, "specimen_part", seed = 42)
+```
+
+##### Sex
+
+```{r,cache=TRUE}
+plot_functionN(exprs_data_norm, "sex", seed = 42)
+```
+
+##### Expression
+
+```{r,cache=TRUE}
+plot_functionN(exprs_data_norm, "total_exp", seed = 42)
+```
+
+
+#### min_dist {.tabset}
+
+The min_dist parameter basically determines how closely together points are allowed to pack in the low-dimensional space, like deciding the minimum allowable separation between clustered points. For instance, if you select a very low min_dist, points that are highly similar will be allowed to clump tightly together, creating more compact clusters.
+
+Hence, a low min_dist value will help us to visualize detailed cluster structures, as it allows the data to form tight, distinct groupings; while a high min_dist value is better for analyzing the broader distribution of the data, as it forces points to stay further apart, preventing tight clumps and focusing instead on the overall distribution.
+
+In this case, it seems that the best min_dist for this plot is around 0.5, as it provides the perfect structure; it is enough to separate the different clusters, and at the same time prevent overly compressed ones. Hence, for the final plots, we will be setting min_dist to this value.
+
+```{r}
+set.seed(42)
+umap_fin <- umap(exprs_data_norm, n_neighbors=150, min_dist=0.5)
+```
+
+<details>
+<summary>Click to show the animated min_dist comparison plot R code</summary>
+
+```{r}
+plot_functionM <- function(exprs_data_norm, third_variable, seed = 42) {
+  umap_all <- data.frame()
+  min_dist <- c(0.1, 0.5, 0.7, 0.9)
+  
+  for (i in min_dist) {
+    set.seed(seed)
+    umap_res <- umap(exprs_data_norm, min_dist = i)
+    
+    umap_plot <- data.frame(
+      x = umap_res$layout[, 1],
+      y = umap_res$layout[, 2],
+      min_dist = i,
+      Diet = meta_data$Diet,
+      specimen_part = meta_data$specimen_part,
+      sex = meta_data$sex,
+      total_exp = meta_data$total_exp
+    )
+    
+    umap_all <- rbind(umap_all, umap_plot)
+  }
+  
+  p <- ggplot(umap_all, aes(x, y, colour = .data[[third_variable]], group = 1)) +
+    geom_point(size = 2) +
+    theme_light() +
+    labs(
+      title = paste(third_variable, "- Min_dist", "{closest_state}"),
+      colour = third_variable
+    ) +
+    transition_states(
+      min_dist,
+      transition_length = 2,
+      state_length = 1,
+      wrap = FALSE
+    ) +
+    view_follow(fixed_x = FALSE, fixed_y = FALSE)
+  
+  animate(p, nframes = 100, fps = 20)
+}
+```
+
+</details>
+
+##### Diet
+
+```{r,cache=TRUE}
+plot_functionM(exprs_data_norm, "Diet", seed = 42)
+```
+
+##### Specimen part
+
+```{r,cache=TRUE}
+plot_functionM(exprs_data_norm, "specimen_part", seed = 42)
+```
+
+##### Sex
+
+```{r,cache=TRUE}
+plot_functionM(exprs_data_norm, "sex", seed = 42)
+```
+
+##### Expression
+
+```{r,cache=TRUE}
+plot_functionM(exprs_data_norm, "total_exp", seed = 42)
+```
+
+
+#### n_epochs {.tabset}
+
+The n_epochs parameter basically determines how many itearation the algorithm is allowed to spend optimizing the layout. Hence, if you select a low n_epochs, the algorithm might stop before the points have found their optimal places, leaving the plot looking a bit messy or incomplete.
+
+<details>
+<summary>Click to show the animated n_epochs comparison plot R code</summary>
+
+```{r}
+plot_functionE <- function(exprs_data_norm, third_variable, seed = 42) {
+  umap_all <- data.frame()
+  n_epochs <- c(50, 100, 200, 500, 1000)
+  
+  for (i in n_epochs) {
+    set.seed(seed)
+    umap_res <- umap(exprs_data_norm, n_epochs = i)
+    
+    umap_plot <- data.frame(
+      x = umap_res$layout[, 1],
+      y = umap_res$layout[, 2],
+      n_epochs = i,
+      Diet = meta_data$Diet,
+      specimen_part = meta_data$specimen_part,
+      sex = meta_data$sex,
+      total_exp = meta_data$total_exp
+    )
+    
+    umap_all <- rbind(umap_all, umap_plot)
+  }
+  
+  p <- ggplot(umap_all, aes(x, y, colour = .data[[third_variable]], group = 1)) +
+    geom_point(size = 2) +
+    theme_light() +
+    labs(
+      title = paste(third_variable, "- N_epochs", "{closest_state}"),
+      colour = third_variable
+    ) +
+    transition_states(
+      n_epochs,
+      transition_length = 2,
+      state_length = 1,
+      wrap = FALSE
+    ) +
+    view_follow(fixed_x = FALSE, fixed_y = FALSE)
+  
+  animate(p, nframes = 100, fps = 20)
+}
+```
+
+</details
+
+##### Diet
+
+```{r,cache=TRUE}
+plot_functionE(exprs_data_norm, "Diet", seed = 42)
+```
+
+##### Specimen part
+
+```{r,cache=TRUE}
+plot_functionE(exprs_data_norm, "specimen_part", seed = 42)
+```
+
+##### Sex
+
+```{r,cache=TRUE}
+plot_functionE(exprs_data_norm, "sex", seed = 42)
+```
+
+##### Expression
+
+```{r,cache=TRUE}
+plot_functionE(exprs_data_norm, "total_exp", seed = 42)
+```
+
+### {-}
+
+## Final plots
+
+<details>
+<summary>Click to show the global final plot data frame creation comparison plot R code</summary>
+
+```{r}
+df_PCA <- data.frame(
+  dim1 = pca_result$x[,1],
+  dim2 = pca_result$x[,2],
+  diet = meta_data$Diet,
+  rep = meta_data$Replicate,
+  sex = meta_data$sex,
+  exp = meta_data$total_exp,
+  part = meta_data$specimen_part,
+  Method = "PCA"
+)
+
+df_tsne <- data.frame(
+  dim1 = tsne_norm$Y[,1],
+  dim2 = tsne_norm$Y[,2],
+  diet = meta_data$Diet,
+  rep = meta_data$Replicate,
+  sex = meta_data$sex,
+  exp = meta_data$total_exp,
+  part = meta_data$specimen_part,
+  Method = "tSNE"
+)
+
+df_UMAP <- data.frame(
+  dim1 = umap_fin$layout[,1],
+  dim2 = umap_fin$layout[,2],
+  diet = meta_data$Diet,
+  rep = meta_data$Replicate,
+  sex = meta_data$sex,
+  exp = meta_data$total_exp,
+  part = meta_data$specimen_part,
+  Method = "UMAP"
+)
+
+# Combine all PCA results
+df_all <- bind_rows(df_PCA, df_tsne, df_UMAP)
+
+# Set facet order
+df_all$Method <- factor(
+  df_all$Method,
+  levels = c("PCA", "tSNE", "UMAP")
+)
+```
+
+</details>
+
+#### Diet & Expression
+
+In reference to the main objective, the following plot has shown that there is not a direct correlation between diet followed and total expression. This conclusion is driven from the fact that all 3 techniques have cluster the samples' expression independently from the diet type; all the clusters have a mix of different diets, implying that diet has not a crucial effect on genes expression.
+
+However, we have also considered the possibility of it to be linked to total expression, but from underneath, we can deduce that it is not probable, because the samples with the same diet also have a different colors.
+
+Hence same diet does neither imply to have similar expression in the transcriptome, nor guarantees to have the same total expression.
+
+```{r fig.width=12, fig.height=5}
+ggplot(df_all,
+       aes(x = dim1,
+           y = dim2,
+           colour = exp,
+           shape = diet)) +
+  
+  geom_point(alpha = 0.8) +
+  theme_bw()+
+  ggtitle("Diet & Total Expression analysis")+
+  facet_wrap(~Method, scales = "free") +
+  scale_color_gradient(name = 'Expression', low = 'green', high = 'red')+
+  scale_shape_manual(values = c(3,15))
+```
+
+#### Specimen part & Sex
+
+Concerning the 2 most relevant variables that we have seen before, there is a small discrepancy between algorithms.
+  - PCA: clusters mostly by specimen part, and fails to separate fully by sex; having on the left bottom corner a mix of males and females
+  - tSNE: clusters mainly divided by sex, clearly differentiating them; however, it does not completely separate by specimen part, 
+  - UMAP: Differentiates the two variables dependently one from another, such that clusters females head far away from females bodies; and clusters males head and males bodies separately, though not far away from each other.
+  
+To sum up, PCA considers the tissue (specimen part) more differential, while tSNE considers sex, and UMAP considers that the impact tissue has is related to the sex (dependent variables) and both interact simultaneously with expression.
+
+```{r fig.width=12, fig.height=5}
+ggplot(df_all,
+       aes(x = dim1,
+           y = dim2,
+           colour = part,
+           shape = sex)) +
+  
+  geom_point(alpha = 0.8) +
+  theme_bw()+
+  ggtitle("Specimen part & Sex analysis")+
+  facet_wrap(~Method, scales = "free") +
+  scale_shape_manual(values = c(3,15))
+```
+
+#### Sex & Expression
+
+As to refer to one of the hypothesis about expression, we were to plot how does Sex correlate with Total Expression. Nevertheless, by observing the following plot, we fail to extract a definitive conclusion, because samples with the same sex does not share a similar color; which means that having the same sex does not lead to a similar total expression, failing to prove its direct relationship.
+
+```{r fig.width=12, fig.height=5}
+ggplot(df_all,
+       aes(x = dim1,
+           y = dim2,
+           colour = exp,
+           shape = diet)) +
+  
+  geom_point(alpha = 0.8) +
+  theme_bw()+
+  ggtitle("Sex & Total Expression analysis")+
+  facet_wrap(~Method, scales = "free") +
+  scale_color_gradient(name = 'Expression', low = 'green', high = 'red')+
+  scale_shape_manual(values = c(3,15))
+```
+
+#### Specimen part & Expression
+
+In the case of Tissue and Total Expression, it has happened the same as the previous plot; samples that share the same specimen part does not share same Total Expression pattern, hence, also failing to prove a direct connection.
+
+```{r fig.width=12, fig.height=5}
+ggplot(df_all,
+       aes(x = dim1,
+           y = dim2,
+           colour = exp,
+           shape = part)) +
+  
+  geom_point(alpha = 0.8) +
+  theme_bw()+
+  ggtitle("Diet & Total Expression analysis")+
+  facet_wrap(~Method, scales = "free") +
+  scale_color_gradient(name = 'Expression', low = 'green', high = 'red')+
+  scale_shape_manual(values = c(3,15))
+```
+
+### Conclusions
+
+When comparing the dimensionalty reduction techniques, PCA functions as a linear dimensionalty reduction method that primarily captures the global variance of the dataset, revealing three main clusters. Through this technique, the data shows a major difference driven by Tissue types, followed secondarily by differences in Sex.
+
+In contrast, t-SNE applies a nonlinear dimensionalty reduction approach that focuses heavily on preserving local structures, splitting the data into three to four main clusters. Interestingly, t-SNE flips the order of variance seen in PCA, revealing that the major difference in these local groupings is driven by Sex, which is then followed by differences in Tissue.
+
+Joining these two approaches, UMAP uses nonlinear manifold learning to preserve both global and local structures simultaneously, resulting in various medium-sized clusters. This balanced perspective highlights a more complex interaction; the difference between Tissues is much more extreme and distinct in females than it is in males. 
+
+Interestingly, this final conclusion reached by UMAP was actually hinted at by both PCA and t-SNE. Because PCA prioritized global variance, it captured the Tissue differences but failed to cleanly separate Sex. Conversely, t-SNE focused on local structures, identifying Sex as the principal driver but failing to fully separate the Tissues within those clusters. Therefore, UMAP, by combining both global and local approaches, gave us the last necessary insight to reach the final conclusion.
+
+However, across all three methods, one consistent finding remains clear: Diet does not have a visible impact on the data grouping.
+
+### Interpretation
+
+Based on our analysis, we investigated three core hypotheses regarding how diet, tissue type, and sex influence the transcriptome, obtaining the following insights:
+
+  - **Hypothesis 1**: it is hypothesized that a high-fat diet (HFD) may induce abnormalities in the nervous system, implying a functional link between metabolic organs and the central nervous system (CNS).
+  
+Ultimately, this link could not be demonstrated in our dataset, as diet did not show a noticeable impact on the overall expression patterns.
+
+  - **Hypothesis 2** (Tissue-Specific Expression): We expected to see tissue-specific expression that would heavily segregate the data, given that gene expression in the CNS (head) is fundamentally different from the rest of the body.
+
+  - **Hypothesis 3** (Sex-Specific Expression): We predicted distinct sex-specific expression profiles due to natural differences in physiological transcriptomes.
+
+While both Tissue and Sex clearly matter in transcriptomics across all of our dimensionality reduction plots, their overarching influence could not be definitively proven in the total gene expression data. Nevertheless, the distinct clustering behavior strongly suggests that a meaningful link could exist between the expression of specific subsets of genes patterned in a similar way and the combined factors of Tissue and Sex. 
+
+Moreover, this molecular link could ultimately be reflected in neurocognitive diseases; if a distinct expression pattern indeed exists across these variables, the fact that it directly interferes with gene regulation could be fundamentally related to the development or manifestation of the human diseases being studied in the experiment.
+
